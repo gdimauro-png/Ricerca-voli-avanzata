@@ -3,16 +3,16 @@ import pandas as pd
 import datetime, calendar, time
 from serpapi import GoogleSearch
 
-st.set_page_config(page_title="Voli Gruppi", page_icon="✈️", layout="wide")
-st.title("⚡ Radar Voli Veloce: 100% Orari Garantiti")
-st.markdown("Divisione per settimane con estrazione forzata del volo di ritorno.")
+st.set_page_config(page_title="Voli Gruppi Italia-Europa", page_icon="✈️", layout="wide")
+st.title("⚡ Radar Voli Gruppi: Orari & Scali Precisi")
+st.markdown("Tratte dirette con indicazione dello scalo italiano esatto di partenza e ritorno garantito sullo stesso aeroporto.")
 
-# --- DATABASE ---
+# --- DATABASE MACRO-AREE ---
 MACRO_AREE = {
-    "NORD (MXP, BGY, VCE, TRN, BLQ...)": "BGY,MXP,LIN,TRN,VCE,TSF,VRN,BLQ,GOA",
-    "CENTRO (FCO, CIA, PSA, FLR...)": "FCO,CIA,PSA,FLR,AOI,PEG",
-    "SUD (NAP, BRI, BDS, SUF...)": "NAP,BRI,BDS,SUF,REG",
-    "ISOLE (CTA, PMO, CAG, OLB...)": "CTA,PMO,TPS,CAG,OLB,AHO"
+    "NORD (BGY, MXP, LIN, VCE, TSF, VRN, BLQ, TRN, GOA)": "BGY,MXP,LIN,TRN,VCE,TSF,VRN,BLQ,GOA",
+    "CENTRO (FCO, CIA, PSA, FLR, AOI, PEG)": "FCO,CIA,PSA,FLR,AOI,PEG",
+    "SUD (NAP, BRI, BDS, SUF, REG)": "NAP,BRI,BDS,SUF,REG",
+    "ISOLE (CTA, PMO, TPS, CAG, OLB, AHO)": "CTA,PMO,TPS,CAG,OLB,AHO"
 }
 
 TOP_EUROPA = [
@@ -34,7 +34,7 @@ st.sidebar.header("⚙️ 1. Credenziali")
 api_key = st.sidebar.text_input("🔑 API Key SerpApi", type="password")
 
 st.sidebar.header("🗺️ 2. Tratte")
-origini = st.sidebar.multiselect("🛫 Da dove parti?", list(MACRO_AREE.keys()), default=[list(MACRO_AREE.keys())[0]])
+origini = st.sidebar.multiselect("🛫 Da dove parti? (Macro-aree)", list(MACRO_AREE.keys()), default=[list(MACRO_AREE.keys())[0]])
 dest_selezionate = st.sidebar.multiselect("🛬 Scegli Aeroporti Europei", TOP_EUROPA, default=["BCN (Barcellona)"])
 dest_custom = st.sidebar.text_input("...o digita Codici IATA (es. DUB)")
 
@@ -66,14 +66,21 @@ lista_dest = list(set(lista_dest))
 
 totale_chiamate_base = len(origini) * len(lista_dest) * len(giorni_partenza)
 st.markdown("---")
-st.info(f"Ricerca in corso. Potrebbe richiedere extra-chiamate automatiche per forzare i dettagli dei voli di ritorno.")
+st.info(f"💡 Il sistema ricercherà i voli di andata e bloccherà automaticamente il ritorno sullo stesso aeroporto italiano.")
 
-# --- FUNZIONE DI RICERCA SINGOLA (PER IL RITORNO) ---
+# --- FUNZIONE DI RICERCA VOLO SINGOLO ---
 def cerca_volo_singolo(da, verso, data, pax, chiave):
     params = {
-        "engine": "google_flights", "departure_id": da, "arrival_id": verso,
-        "outbound_date": data, "type": 2, "adults": pax, "stops": 1,
-        "currency": "EUR", "hl": "it", "api_key": chiave
+        "engine": "google_flights", 
+        "departure_id": da, 
+        "arrival_id": verso,
+        "outbound_date": data, 
+        "type": 2, # Solo Andata
+        "adults": pax, 
+        "stops": 1,
+        "currency": "EUR", 
+        "hl": "it", 
+        "api_key": chiave
     }
     try:
         res = GoogleSearch(params).get_dict()
@@ -85,19 +92,32 @@ def cerca_volo_singolo(da, verso, data, pax, chiave):
                 comp = volo.get("airline", "")
                 if any(t.lower() in comp.lower() for t in COMPAGNIE_TARGET):
                     prz = opz.get("price", 0)
-                    orario = volo.get("departure_airport", {}).get("time", "N/D")
+                    dep_info = volo.get("departure_airport", {})
+                    arr_info = volo.get("arrival_airport", {})
+                    
+                    orario = dep_info.get("time", "N/D")
                     num_volo = volo.get("flight_number", "")
-                    voli_trovati.append({"compagnia": comp, "orario": f"{orario} ({comp} {num_volo})", "prezzo": prz})
+                    scalo_dep = dep_info.get("id", da)
+                    scalo_arr = arr_info.get("id", verso)
+                    
+                    voli_trovati.append({
+                        "compagnia": comp,
+                        "orario_dettaglio": f"{orario} ({comp} {num_volo})",
+                        "prezzo": prz,
+                        "scalo_partenza": scalo_dep,
+                        "scalo_arrivo": scalo_arr
+                    })
         if voli_trovati:
-            # Ordina per prezzo e restituisce il più economico
+            # Ordina per tariffa più bassa
             voli_trovati.sort(key=lambda x: x["prezzo"])
             return voli_trovati[0]
-    except: pass
+    except: 
+        pass
     return None
 
 # --- ESECUZIONE ---
-if st.button("🚀 Avvia Scansione", type="primary", use_container_width=True):
-    if not api_key: st.error("Inserisci la chiave API."); st.stop()
+if st.button("🚀 Avvia Scansione Completa", type="primary", use_container_width=True):
+    if not api_key: st.error("Inserisci la chiave API a sinistra."); st.stop()
     if not origini or not lista_dest: st.error("Seleziona origini e destinazioni."); st.stop()
         
     pax_api = min(passeggeri_reali, 9)
@@ -111,34 +131,44 @@ if st.button("🚀 Avvia Scansione", type="primary", use_container_width=True):
         for dest in lista_dest:
             for giorno in giorni_partenza:
                 chiamata_attuale += 1
-                status.text(f"Scansione Andata {chiamata_attuale}/{totale_chiamate_base} | {origine_nome.split(' ')[0]} ➔ {dest}...")
+                status.text(f"Controllo {chiamata_attuale}/{totale_chiamate_base} | {origine_nome.split(' ')[0]} ➔ {dest}...")
                 
                 data_andata_obj = datetime.date(anno, mese, giorno)
                 data_ritorno_obj = data_andata_obj + datetime.timedelta(days=giorni_viaggio - 1)
-                str_andata, str_ritorno = data_andata_obj.strftime("%Y-%m-%d"), data_ritorno_obj.strftime("%Y-%m-%d")
+                str_andata = data_andata_obj.strftime("%Y-%m-%d")
+                str_ritorno = data_ritorno_obj.strftime("%Y-%m-%d")
                 
-                # Cerco l'andata singola invece che l'A/R (per essere certo di avere tutti i dati puliti)
+                # 1. Ricerca del volo di Andata da tutta la macro-area
                 andata_info = cerca_volo_singolo(codici_origine, dest, str_andata, pax_api, api_key)
                 
                 if andata_info:
-                    status.text(f"Volo di Andata trovato! Forzo la ricerca per il Ritorno: {dest} ➔ {origine_nome.split(' ')[0]}...")
-                    time.sleep(1) # Pausa di sicurezza per l'API
+                    aeroporto_partenza_reale = andata_info["scalo_partenza"] # Es. BGY o FCO
+                    status.text(f"Trovata andata da {aeroporto_partenza_reale}! Verifico ritorno da {dest} a {aeroporto_partenza_reale}...")
+                    time.sleep(1)
                     
-                    # Interrogo il ritorno esattamente da quell'aeroporto specifico trovato all'andata
-                    ritorno_info = cerca_volo_singolo(dest, codici_origine, str_ritorno, pax_api, api_key)
+                    # 2. Ricerca del Ritorno forzato sullo STESSO aeroporto italiano di partenza
+                    ritorno_info = cerca_volo_singolo(dest, aeroporto_partenza_reale, str_ritorno, pax_api, api_key)
+                    
+                    # Se non trova il ritorno sullo stesso scalo esatto, cerca in tutta la macro-area
+                    if not ritorno_info:
+                        ritorno_info = cerca_volo_singolo(dest, codici_origine, str_ritorno, pax_api, api_key)
                     
                     if ritorno_info:
                         prezzo_totale = andata_info["prezzo"] + ritorno_info["prezzo"]
                         prz_singolo = prezzo_totale / pax_api
                         
+                        aeroporto_ritorno_reale = ritorno_info["scalo_arrivo"]
+                        
                         dati.append({
                             "Data Andata": data_andata_obj.strftime("%d/%m/%y"),
                             "Data Ritorno": data_ritorno_obj.strftime("%d/%m/%y"),
-                            "A / Da": dest,
-                            "Andata": andata_info["orario"],
-                            "Ritorno": ritorno_info["orario"],
-                            "1 Pax": round(prz_singolo, 2),
-                            f"Gruppo ({passeggeri_reali} pax)": round(prz_singolo * passeggeri_reali, 2)
+                            "Aeroporto Partenza (IT)": aeroporto_partenza_reale,
+                            "Destinazione (UE)": dest,
+                            "Aeroporto Ritorno (IT)": aeroporto_ritorno_reale,
+                            "Volo Andata": andata_info["orario_dettaglio"],
+                            "Volo Ritorno": ritorno_info["orario_dettaglio"],
+                            "1 Pax (A/R)": round(prz_singolo, 2),
+                            f"Gruppo {passeggeri_reali} Pax": round(prz_singolo * passeggeri_reali, 2)
                         })
                 
                 progress_bar.progress(chiamata_attuale / totale_chiamate_base)
@@ -147,13 +177,18 @@ if st.button("🚀 Avvia Scansione", type="primary", use_container_width=True):
     status.text("✅ Scansione completata!")
     
     if dati:
-        df = pd.DataFrame(dati).drop_duplicates().sort_values(by="1 Pax")
+        df = pd.DataFrame(dati).drop_duplicates().sort_values(by="1 Pax (A/R)")
         df_csv = df.copy()
         
-        df["1 Pax"] = df["1 Pax"].apply(lambda x: f"{x} €")
-        df[f"Gruppo ({passeggeri_reali} pax)"] = df[f"Gruppo ({passeggeri_reali} pax)"].apply(lambda x: f"{x} €")
+        df["1 Pax (A/R)"] = df["1 Pax (A/R)"].apply(lambda x: f"{x} €")
+        df[f"Gruppo {passeggeri_reali} Pax"] = df[f"Gruppo {passeggeri_reali} Pax"].apply(lambda x: f"{x} €")
         
         st.dataframe(df, use_container_width=True)
-        st.download_button("📥 Scarica CSV", data=df_csv.to_csv(index=False).encode('utf-8'), file_name="voli_dettagliati.csv", mime="text/csv")
+        st.download_button(
+            "📥 Scarica CSV Completo", 
+            data=df_csv.to_csv(index=False).encode('utf-8'), 
+            file_name="voli_dettagliati_gruppo.csv", 
+            mime="text/csv"
+        )
     else:
-        st.warning("Nessuna combinazione andata + ritorno diretta trovata.")
+        st.warning("Nessuna combinazione diretta andata/ritorno trovata per i criteri selezionati.")
