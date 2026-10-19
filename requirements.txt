@@ -1,3 +1,4 @@
 streamlit
-google-search-results
 pandas
+serpapi
+google-search-results
