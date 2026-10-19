@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import datetime, calendar, time
-from fast_flights import FlightData, Result, Passenger
+from fast_flights import get_flights, FlightData, Passenger
 
 st.set_page_config(page_title="Radar Voli Free", page_icon="✈️", layout="wide")
 st.title("⚡ Radar Voli Illimitato (No API Key)")
-st.markdown("Ricerca settimanale gratuita usando i server open-source di Google Flights. **Nessun limite mensile.**")
+st.markdown("Ricerca settimanale gratuita usando i server open-source. **Nessun limite mensile.**")
 
 # --- DATABASE ---
 MACRO_AREE = {
@@ -80,22 +80,17 @@ if st.button("🚀 Avvia Scansione Gratuita", type="primary", use_container_widt
             data_r = (datetime.date(anno, mese, giorno) + datetime.timedelta(days=giorni_viaggio - 1)).strftime("%Y-%m-%d")
             
             try:
-                # Richiesta diretta senza API key
-                risultato = FlightData.get_flights(
-                    flight_filter="diretti", 
-                    date=data_a,
-                    return_date=data_r,
-                    origin=codice_origine, 
-                    destination=dest, 
-                    adults=pax_api,
-                    currency="EUR"
+                # Nuova chiamata corretta per la libreria fast-flights
+                risultato = get_flights(
+                    flight_data=[FlightData(date=data_a, from_airport=codice_origine, to_airport=dest),
+                                 FlightData(date=data_r, from_airport=dest, to_airport=codice_origine)],
+                    passengers=Passenger(adults=pax_api, children=0, infants_in_seat=0, infants_on_lap=0)
                 )
                 
                 # Se la libreria restituisce dei voli
-                if risultato:
-                    for volo in risultato:
-                        # fast-flights unisce il nome delle compagnie se sono diverse per andata e ritorno (es. "Ryanair, Vueling")
-                        compagnie_volo = volo.airline
+                if risultato and risultato.flights:
+                    for volo in risultato.flights:
+                        compagnie_volo = volo.name
                         
                         # Filtriamo per verificare che siano Low-Cost
                         if any(t.lower() in compagnie_volo.lower() for t in COMPAGNIE_TARGET):
@@ -116,7 +111,7 @@ if st.button("🚀 Avvia Scansione Gratuita", type="primary", use_container_widt
                 pass
             
             progress_bar.progress(chiamata_attuale / totale_chiamate)
-            time.sleep(2) # Pausa vitale per non farsi bloccare da Google
+            time.sleep(2) # Pausa per non farsi bloccare
             
     status.text("✅ Scansione gratuita completata!")
     
@@ -130,5 +125,6 @@ if st.button("🚀 Avvia Scansione Gratuita", type="primary", use_container_widt
         st.dataframe(df, use_container_width=True)
         st.download_button("📥 Scarica CSV", data=df_csv.to_csv(index=False).encode('utf-8'), file_name="voli_free.csv", mime="text/csv")
     else:
+        st.warning("Nessuna combinazione diretta trovata o ritardo dei server.")
         st.warning("Nessuna combinazione diretta trovata o i server di Google hanno momentaneamente ritardato la risposta.")
         
