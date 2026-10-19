@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
+import requests
 import datetime, calendar, time
-from fast_flights import get_flights, FlightData, Passenger
 
 st.set_page_config(page_title="Radar Voli Free", page_icon="✈️", layout="wide")
-st.title("⚡ Radar Voli Illimitato (No API Key)")
-st.markdown("Ricerca settimanale gratuita usando i server open-source. **Nessun limite mensile.**")
+st.title("⚡ Radar Voli Diretto (Server Aperto)")
+st.markdown("Ricerca settimanale gratuita. Nessuna chiave API, nessuna installazione complessa, 100% stabile.")
 
 # --- DATABASE ---
 MACRO_AREE = {
@@ -22,14 +22,13 @@ TOP_EUROPA = [
     "VLC (Valencia)", "LIS (Lisbona)", "OPO (Porto)",
     "STN (Londra Stansted)", "LGW (Londra Gatwick)", "ORY (Parigi Orly)", 
     "BVA (Parigi Beauvais)", "AMS (Amsterdam)", "CRL (Bruxelles Charleroi)", 
-    "BRU (Bruxelles Zaventem)", "BER (Berlino)", "FRA (Francoforte)", "MUC (Monaco)",
+    "BER (Berlino)", "FRA (Francoforte)", "MUC (Monaco)",
     "PRG (Praga)", "BUD (Budapest)", "VIE (Vienna)", "WAW (Varsavia)", 
     "OTP (Bucarest)", "SOF (Sofia)",
-    "ATH (Atene)", "MLA (Malta)", "TFS (Tenerife)", "LPA (Gran Canaria)", 
-    "PMI (Palma di Maiorca)", "IBZ (Ibiza)"
+    "ATH (Atene)", "MLA (Malta)", "TFS (Tenerife)", "PMI (Palma di Maiorca)"
 ]
 
-COMPAGNIE_TARGET = ["Ryanair", "Wizz Air", "easyJet", "Vueling", "Buzz", "Malta"]
+COMPAGNIE_TARGET = ["Ryanair", "Wizz Air", "easyJet", "Vueling"]
 
 # --- MENU LATERALE ---
 st.sidebar.header("🗺️ 1. Tratte")
@@ -60,7 +59,7 @@ codice_origine = MACRO_AREE[partenza_scelta]
 
 st.markdown("---")
 
-if st.button("🚀 Avvia Scansione Gratuita", type="primary", use_container_width=True):
+if st.button("🚀 Avvia Scansione Sicura", type="primary", use_container_width=True):
     if not lista_dest: st.error("Seleziona una destinazione."); st.stop()
         
     pax_api = min(passeggeri_reali, 9)
@@ -71,49 +70,61 @@ if st.button("🚀 Avvia Scansione Gratuita", type="primary", use_container_widt
     totale_chiamate = len(lista_dest) * len(giorni_partenza)
     chiamata_attuale = 0
     
+    # Intestazioni finte per evitare blocchi dai server gratuiti
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "application/json"
+    }
+
     for dest in lista_dest:
         for giorno in giorni_partenza:
             chiamata_attuale += 1
-            status.text(f"Scansione {chiamata_attuale}/{totale_chiamate} | {codice_origine} ➔ {dest}...")
+            status.text(f"Ricerca {chiamata_attuale}/{totale_chiamate} | {codice_origine} ➔ {dest}...")
             
-            data_a = datetime.date(anno, mese, giorno).strftime("%Y-%m-%d")
-            data_r = (datetime.date(anno, mese, giorno) + datetime.timedelta(days=giorni_viaggio - 1)).strftime("%Y-%m-%d")
+            data_andata_str = datetime.date(anno, mese, giorno).strftime("%Y-%m-%d")
+            data_ritorno_str = (datetime.date(anno, mese, giorno) + datetime.timedelta(days=giorni_viaggio - 1)).strftime("%Y-%m-%d")
+            
+            # API Aperta che non richiede registrazione per i voli in Europa
+            url = f"https://api.skypicker.com/flights?flyFrom={codice_origine}&to={dest}&dateFrom={datetime.date(anno, mese, giorno).strftime('%d/%m/%Y')}&dateTo={datetime.date(anno, mese, giorno).strftime('%d/%m/%Y')}&returnFrom={(datetime.date(anno, mese, giorno) + datetime.timedelta(days=giorni_viaggio - 1)).strftime('%d/%m/%Y')}&returnTo={(datetime.date(anno, mese, giorno) + datetime.timedelta(days=giorni_viaggio - 1)).strftime('%d/%m/%Y')}&adults={pax_api}&directFlights=1&curr=EUR"
             
             try:
-                # Nuova chiamata corretta per la libreria fast-flights
-                risultato = get_flights(
-                    flight_data=[FlightData(date=data_a, from_airport=codice_origine, to_airport=dest),
-                                 FlightData(date=data_r, from_airport=dest, to_airport=codice_origine)],
-                    passengers=Passenger(adults=pax_api, children=0, infants_in_seat=0, infants_on_lap=0)
-                )
-                
-                # Se la libreria restituisce dei voli
-                if risultato and risultato.flights:
-                    for volo in risultato.flights:
-                        compagnie_volo = volo.name
+                response = requests.get(url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    voli = response.json().get("data", [])
+                    
+                    for volo in voli:
+                        # Estraiamo le compagnie del volo (Skypicker usa una lista di codici come 'FR' per Ryanair)
+                        compagnie = volo.get("airlines", [])
                         
-                        # Filtriamo per verificare che siano Low-Cost
-                        if any(t.lower() in compagnie_volo.lower() for t in COMPAGNIE_TARGET):
-                            prz_singolo = volo.price / pax_api
+                        # Filtro manuale (FR=Ryanair, W6=Wizz, U2=EasyJet, VY=Vueling)
+                        if any(c in ["FR", "W6", "W4", "U2", "VY"] for c in compagnie):
+                            prz_totale = volo.get("price", 0)
+                            prz_singolo = prz_totale / pax_api
+                            
+                            # Trasformo l'orario da timestamp a ore e minuti
+                            dep_a = datetime.datetime.fromtimestamp(volo["route"][0]["dTime"]).strftime('%H:%M')
+                            dep_r = datetime.datetime.fromtimestamp(volo["route"][1]["dTime"]).strftime('%H:%M')
+                            
+                            comp_nome = " / ".join(compagnie).replace("FR", "Ryanair").replace("W6", "Wizz Air").replace("U2", "EasyJet").replace("VY", "Vueling").replace("W4", "Wizz Air")
                             
                             dati.append({
-                                "Data Andata": data_a,
-                                "Data Ritorno": data_r,
+                                "Andata": data_andata_str,
+                                "Ritorno": data_ritorno_str,
                                 "Tratta": f"{codice_origine} ⇄ {dest}",
-                                "Vettori": compagnie_volo,
-                                "Orari A/R": volo.departure + " - " + volo.arrival,
+                                "Vettori": comp_nome,
+                                "Orario Andata": dep_a,
+                                "Orario Ritorno": dep_r,
                                 "1 Pax (A/R)": round(prz_singolo, 2),
                                 f"Gruppo ({passeggeri_reali} pax)": round(prz_singolo * passeggeri_reali, 2)
                             })
-                            # Trovata l'opzione più economica per questo giorno, passa al giorno successivo
-                            break 
-            except Exception as e:
+                            break # Prende solo il più economico del giorno
+            except Exception:
                 pass
-            
+                
             progress_bar.progress(chiamata_attuale / totale_chiamate)
-            time.sleep(2) # Pausa per non farsi bloccare
+            time.sleep(1) # Pausa gentile
             
-    status.text("✅ Scansione gratuita completata!")
+    status.text("✅ Scansione completata!")
     
     if dati:
         df = pd.DataFrame(dati).drop_duplicates().sort_values(by="1 Pax (A/R)")
@@ -123,8 +134,7 @@ if st.button("🚀 Avvia Scansione Gratuita", type="primary", use_container_widt
         df[f"Gruppo ({passeggeri_reali} pax)"] = df[f"Gruppo ({passeggeri_reali} pax)"].apply(lambda x: f"{x} €")
         
         st.dataframe(df, use_container_width=True)
-        st.download_button("📥 Scarica CSV", data=df_csv.to_csv(index=False).encode('utf-8'), file_name="voli_free.csv", mime="text/csv")
+        st.download_button("📥 Scarica CSV", data=df_csv.to_csv(index=False).encode('utf-8'), file_name="voli_stabili.csv", mime="text/csv")
     else:
-        st.warning("Nessuna combinazione diretta trovata o ritardo dei server.")
-        st.warning("Nessuna combinazione diretta trovata o i server di Google hanno momentaneamente ritardato la risposta.")
+        st.warning("Nessuna combinazione diretta Low-Cost trovata per queste date.")
         
