@@ -1,4 +1,4 @@
 streamlit
 pandas
-serpapi
+fast-flights
 google-search-results
